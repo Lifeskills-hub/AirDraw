@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Air Draw v2.0</title>
+  <title>Air Draw: Hand Gesture Drawing Game with Flies</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -14,8 +14,8 @@
     .input_video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
     .output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
     .mirrored { transform: scaleX(-1); }
-    .controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; }
-    button, select { padding: 10px 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    .controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+    button, select { padding: 10px 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; touch-action: manipulation; }
     button:hover, select:hover { background: #0056b3; }
     .instructions { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; z-index: 10; }
   </style>
@@ -30,12 +30,13 @@
         <li>Open hand: Draw with index finger (lines stay unless it's a closed circle).</li>
         <li>Pinch (thumb + index): Stop drawing and check for circle to catch flies.</li>
         <li>Draw closed circles around flies to eliminate them (circle will disappear).</li>
-        <li>Change colors and flip camera as needed.</li>
+        <li>Change colors, flip camera, or toggle mirror as needed.</li>
       </ul>
     </div>
     <div class="controls">
       <button onclick="clearCanvas()">Clear Drawing</button>
       <button onclick="toggleCamera()">Flip Camera</button>
+      <button onclick="toggleMirror()">Toggle Mirror</button>
       <select onchange="changeColor(this.value)">
         <option value="red">Red</option>
         <option value="blue">Blue</option>
@@ -50,7 +51,7 @@
     const canvasCtx = canvasElement.getContext('2d');
 
     let currentFacing = 'user';
-    let isMirrored = currentFacing === 'user';
+    let isMirrored = true; // Default to mirrored for natural feel
     let currentStream = null;
     let currentColor = 'red';
     let strokes = [];
@@ -60,14 +61,57 @@
 
     function changeColor(color) {
       currentColor = color;
+      currentStroke.color = currentColor; // Allow mid-stroke color change for flexibility
     }
 
     function clearCanvas() {
       strokes = [];
       currentStroke = { points: [], color: currentColor, width: 5 };
       score = 0;
-      flies = []; // Reset flies too, or keep?
+      flies = [];
       for (let i = 0; i < 5; i++) addFly();
+      redraw(); // Explicit redraw after clear
+    }
+
+    function redraw() {
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      // Draw persistent strokes
+      for (let stroke of strokes) {
+        if (stroke.points.length < 2) continue;
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
+        for (let i = 1; i < stroke.points.length; i++) {
+          canvasCtx.lineTo(stroke.points[i].x, stroke.points[i].y);
+        }
+        canvasCtx.strokeStyle = stroke.color;
+        canvasCtx.lineWidth = stroke.width;
+        canvasCtx.stroke();
+      }
+
+      // Draw current stroke
+      if (currentStroke.points.length >= 2) {
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(currentStroke.points[0].x, currentStroke.points[0].y);
+        for (let i = 1; i < currentStroke.points.length; i++) {
+          canvasCtx.lineTo(currentStroke.points[i].x, currentStroke.points[i].y);
+        }
+        canvasCtx.strokeStyle = currentStroke.color;
+        canvasCtx.lineWidth = currentStroke.width;
+        canvasCtx.stroke();
+      }
+
+      // Draw flies
+      canvasCtx.font = '20px Arial';
+      canvasCtx.fillStyle = 'black';
+      for (let fly of flies) {
+        canvasCtx.fillText('🪰', fly.x, fly.y);
+      }
+
+      // Draw score
+      canvasCtx.fillStyle = 'black';
+      canvasCtx.font = '20px Arial';
+      canvasCtx.fillText(`Score: ${score}`, 10, 30);
     }
 
     async function startCamera(facing) {
@@ -101,10 +145,13 @@
 
     function toggleCamera() {
       currentFacing = currentFacing === 'user' ? 'environment' : 'user';
-      isMirrored = currentFacing === 'user';
+      startCamera(currentFacing);
+    }
+
+    function toggleMirror() {
+      isMirrored = !isMirrored;
       videoElement.classList.toggle('mirrored', isMirrored);
       canvasElement.classList.toggle('mirrored', isMirrored);
-      startCamera(currentFacing);
     }
 
     function addFly() {
@@ -121,6 +168,9 @@
       if (canvasElement.width !== videoElement.videoWidth || canvasElement.height !== videoElement.videoHeight) {
         canvasElement.width = videoElement.videoWidth;
         canvasElement.height = videoElement.videoHeight;
+        // Re-add flies if resized
+        flies = [];
+        for (let i = 0; i < 5; i++) addFly();
       }
 
       let ix = null, iy = null, tx = null, ty = null, dist = 0;
@@ -136,14 +186,18 @@
 
         dist = Math.hypot(ix - tx, iy - ty) / canvasElement.width;
 
-        if (dist > 0.05) { // Draw mode (improved threshold for better recognition)
-          currentStroke.points.push({ x: ix, y: iy });
+        if (dist > 0.05) { // Draw mode
+          if (currentStroke.points.length === 0 || 
+              Math.hypot(ix - currentStroke.points[currentStroke.points.length - 1].x, 
+                         iy - currentStroke.points[currentStroke.points.length - 1].y) > 3) { // Min distance for smoother lines
+            currentStroke.points.push({ x: ix, y: iy });
+          }
         } else { // Pinch mode
-          if (currentStroke.points.length > 10) { // Min points for a valid stroke
+          if (currentStroke.points.length > 10) {
             const first = currentStroke.points[0];
             const last = currentStroke.points[currentStroke.points.length - 1];
             const closeDist = Math.hypot(first.x - last.x, first.y - last.y);
-            if (closeDist < 50) { // Considered closed circle
+            if (closeDist < 50) {
               const path = new Path2D();
               path.moveTo(first.x, first.y);
               for (let p of currentStroke.points.slice(1)) {
@@ -159,9 +213,8 @@
                 return true;
               });
               score += eliminated;
-              // Circle disappears (not added to strokes)
+              // Circle disappears
             } else {
-              // Not closed, add as persistent line
               strokes.push(currentStroke);
             }
           }
@@ -169,49 +222,16 @@
         }
       }
 
-      // Redraw everything every frame
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-      // Draw persistent strokes
-      for (let stroke of strokes) {
-        if (stroke.points.length < 2) continue;
-        canvasCtx.beginPath();
-        canvasCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
-        for (let p of stroke.points.slice(1)) {
-          canvasCtx.lineTo(p.x, p.y);
-        }
-        canvasCtx.strokeStyle = stroke.color;
-        canvasCtx.lineWidth = stroke.width;
-        canvasCtx.stroke();
-      }
-
-      // Draw current stroke
-      if (currentStroke.points.length >= 2) {
-        canvasCtx.beginPath();
-        canvasCtx.moveTo(currentStroke.points[0].x, currentStroke.points[0].y);
-        for (let p of currentStroke.points.slice(1)) {
-          canvasCtx.lineTo(p.x, p.y);
-        }
-        canvasCtx.strokeStyle = currentStroke.color;
-        canvasCtx.lineWidth = currentStroke.width;
-        canvasCtx.stroke();
-      }
-
-      // Update and draw flies
-      canvasCtx.font = '20px Arial';
-      canvasCtx.fillStyle = 'black';
+      // Update flies positions
       for (let fly of flies) {
         fly.x += fly.vx;
         fly.y += fly.vy;
         if (fly.x < 0 || fly.x > canvasElement.width) fly.vx *= -1;
         if (fly.y < 0 || fly.y > canvasElement.height) fly.vy *= -1;
-        canvasCtx.fillText('🪰', fly.x, fly.y);
       }
 
-      // Draw score
-      canvasCtx.fillStyle = 'black';
-      canvasCtx.font = '20px Arial';
-      canvasCtx.fillText(`Score: ${score}`, 10, 30);
+      // Redraw everything
+      redraw();
 
       // Visual feedback for finger tip
       if (ix !== null) {
@@ -228,8 +248,8 @@
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      minDetectionConfidence: 0.6, // Slightly higher for better accuracy
+      minTrackingConfidence: 0.6, // Slightly higher for smoother tracking
     });
     hands.onResults(onResults);
 
