@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Air Draw: Hand Gesture Drawing Game</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <style>
+    body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+    .container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+    .input_video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+    .output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+    .controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10; }
+    button { padding: 10px 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    .instructions { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; z-index: 10; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <video class="input_video"></video>
+    <canvas class="output_canvas"></canvas>
+    <div class="instructions">
+      <p>Instructions:</p>
+      <ul>
+        <li>Open hand: Draw with index finger.</li>
+        <li>Pinch (thumb + index): Stop drawing.</li>
+        <li>Draw shapes in the air!</li>
+      </ul>
+    </div>
+    <div class="controls">
+      <button onclick="clearCanvas()">Clear Drawing</button>
+    </div>
+  </div>
+  <script type="module">
+    const videoElement = document.querySelector('.input_video');
+    const canvasElement = document.querySelector('.output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    let prevX = null;
+    let prevY = null;
+
+    function clearCanvas() {
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    }
+
+    function onResults(results) {
+      // Resize canvas to match video dimensions if needed
+      if (canvasElement.width !== videoElement.videoWidth || canvasElement.height !== videoElement.videoHeight) {
+        canvasElement.width = videoElement.videoWidth;
+        canvasElement.height = videoElement.videoHeight;
+      }
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+        const indexTip = landmarks[8]; // Index finger tip
+        const thumbTip = landmarks[4]; // Thumb tip
+
+        const x = indexTip.x * canvasElement.width;
+        const y = indexTip.y * canvasElement.height;
+        const thumbX = thumbTip.x * canvasElement.width;
+        const thumbY = thumbTip.y * canvasElement.height;
+
+        const dist = Math.hypot(x - thumbX, y - thumbY) / canvasElement.width; // Normalized distance
+
+        if (dist > 0.07) { // Drawing mode (open hand)
+          if (prevX !== null && prevY !== null) {
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(prevX, prevY);
+            canvasCtx.lineTo(x, y);
+            canvasCtx.strokeStyle = 'red';
+            canvasCtx.lineWidth = 5;
+            canvasCtx.stroke();
+          }
+          prevX = x;
+          prevY = y;
+        } else { // Pinch mode (stop drawing)
+          prevX = null;
+          prevY = null;
+        }
+      } else {
+        prevX = null;
+        prevY = null;
+      }
+    }
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+    });
+    hands.setOptions({
+      maxNumHands: 1, // Track one hand for simplicity
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480,
+    });
+    camera.start();
+  </script>
+</body>
+</html>
