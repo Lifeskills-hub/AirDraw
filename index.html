@@ -9,138 +9,189 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <style>
-    body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
-    .container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+    body { margin: 0; padding: 0; font-family: Arial, sans-serif; overflow: hidden; }
+    .container { position: relative; width: 100vw; height: 100vh; }
     .input_video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
     .output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
     .mirrored { transform: scaleX(-1); }
-    .controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-    button, select { padding: 10px 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; touch-action: manipulation; }
+    .controls {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 10; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+    }
+    button, select {
+      padding: 10px 20px; font-size: 16px; background: #007bff; color: white;
+      border: none; border-radius: 5px; cursor: pointer; touch-action: manipulation;
+    }
     button:hover, select:hover { background: #0056b3; }
-    .instructions { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; z-index: 10; }
+    .instructions {
+      position: absolute; top: 20px; left: 20px; color: white;
+      background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px; z-index: 10;
+      max-width: 300px; font-size: 14px;
+    }
+    .score {
+      position: absolute; top: 20px; right: 20px; color: white;
+      background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; z-index: 10;
+      font-size: 18px; font-weight: bold;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <video class="input_video"></video>
     <canvas class="output_canvas"></canvas>
+
     <div class="instructions">
-      <p>Instructions:</p>
+      <p><strong>Instructions:</strong></p>
       <ul>
-        <li>Open hand: Draw with index finger (lines stay unless it's a closed circle).</li>
-        <li>Pinch (thumb + index): Stop drawing and check for circle to catch flies.</li>
-        <li>Draw closed circles around flies to eliminate them (circle will disappear).</li>
-        <li>Change colors, flip camera, or toggle mirror as needed.</li>
+        <li>Open hand: Draw with index finger</li>
+        <li>Pinch (thumb + index): Stop drawing & check for closed circle</li>
+        <li>Draw a <strong>closed loop</strong> around flies to catch them</li>
+        <li>Use buttons to clear, flip camera, or change color</li>
       </ul>
     </div>
+
+    <div class="score">Score: <span id="score">0</span></div>
+
     <div class="controls">
-      <button onclick="clearCanvas()">Clear Drawing</button>
+      <button onclick="clearCanvas()">Clear All</button>
       <button onclick="toggleCamera()">Flip Camera</button>
       <button onclick="toggleMirror()">Toggle Mirror</button>
       <select onchange="changeColor(this.value)">
         <option value="red">Red</option>
-        <option value="blue">Blue</option>
+        <option value="blue" selected>Blue</option>
         <option value="green">Green</option>
         <option value="black">Black</option>
+        <option value="yellow">Yellow</option>
       </select>
     </div>
   </div>
+
   <script type="module">
     const videoElement = document.querySelector('.input_video');
     const canvasElement = document.querySelector('.output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
+    const scoreElement = document.getElementById('score');
 
     let currentFacing = 'user';
-    let isMirrored = true; // Default to mirrored for natural feel
+    let isMirrored = true;
     let currentStream = null;
-    let currentColor = 'red';
+    let currentColor = 'blue';
     let strokes = [];
-    let currentStroke = { points: [], color: currentColor, width: 5 };
+    let currentStroke = { points: [], color: currentColor, width: 6 };
     let flies = [];
     let score = 0;
 
+    // Update score display
+    function updateScore() {
+      scoreElement.textContent = score;
+    }
+
+    // Change drawing color
     function changeColor(color) {
       currentColor = color;
-      currentStroke.color = currentColor; // Allow mid-stroke color change for flexibility
+      if (currentStroke.points.length > 0) {
+        currentStroke.color = color;
+      }
     }
 
+    // Clear everything
     function clearCanvas() {
       strokes = [];
-      currentStroke = { points: [], color: currentColor, width: 5 };
-      score = 0;
+      currentStroke = { points: [], color: currentColor, width: 6 };
       flies = [];
-      for (let i = 0; i < 5; i++) addFly();
-      redraw(); // Explicit redraw after clear
+      score = 0;
+      updateScore();
+      for (let i = 0; i < 5; i++) spawnFly();
+      redraw();
     }
 
+    // Redraw everything
     function redraw() {
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-      // Draw persistent strokes
-      for (let stroke of strokes) {
-        if (stroke.points.length < 2) continue;
-        canvasCtx.beginPath();
-        canvasCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
-        for (let i = 1; i < stroke.points.length; i++) {
-          canvasCtx.lineTo(stroke.points[i].x, stroke.points[i].y);
-        }
-        canvasCtx.strokeStyle = stroke.color;
-        canvasCtx.lineWidth = stroke.width;
-        canvasCtx.stroke();
-      }
+      // Draw completed strokes
+      strokes.forEach(stroke => drawStroke(stroke));
 
-      // Draw current stroke
-      if (currentStroke.points.length >= 2) {
-        canvasCtx.beginPath();
-        canvasCtx.moveTo(currentStroke.points[0].x, currentStroke.points[0].y);
-        for (let i = 1; i < currentStroke.points.length; i++) {
-          canvasCtx.lineTo(currentStroke.points[i].x, currentStroke.points[i].y);
-        }
-        canvasCtx.strokeStyle = currentStroke.color;
-        canvasCtx.lineWidth = currentStroke.width;
-        canvasCtx.stroke();
+      // Draw current stroke (smoothed)
+      if (currentStroke.points.length > 1) {
+        drawStroke(currentStroke, true);
       }
 
       // Draw flies
-      canvasCtx.font = '20px Arial';
-      canvasCtx.fillStyle = 'black';
-      for (let fly of flies) {
-        canvasCtx.fillText('🪰', fly.x, fly.y);
-      }
-
-      // Draw score
-      canvasCtx.fillStyle = 'black';
-      canvasCtx.font = '20px Arial';
-      canvasCtx.fillText(`Score: ${score}`, 10, 30);
+      flies.forEach(fly => {
+        canvasCtx.font = '30px Arial';
+        canvasCtx.fillText('fly', fly.x - 15, fly.y + 10);
+      });
     }
 
+    // Draw a stroke with smoothing
+    function drawStroke(stroke, isCurrent = false) {
+      if (stroke.points.length < 2) return;
+
+      canvasCtx.beginPath();
+      canvasCtx.strokeStyle = stroke.color;
+      canvasCtx.lineWidth = stroke.width;
+      canvasCtx.lineCap = 'round';
+      canvasCtx.lineJoin = 'round';
+
+      let points = stroke.points;
+      canvasCtx.moveTo(points[0].x, points[0].y);
+
+      if (points.length === 2) {
+        canvasCtx.lineTo(points[1].x, points[1].y);
+      } else {
+        for (let i = 1; i < points.length - 1; i++) {
+          const xc = (points[i].x + points[i + 1].x) / 2;
+          const yc = (points[i].y + points[i + 1].y) / 2;
+          canvasCtx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+        }
+        // Last segment
+        const last = points.length - 1;
+        canvasCtx.quadraticCurveTo(points[last - 1].x, points[last - 1].y, points[last].x, points[last].y);
+      }
+
+      if (isCurrent && currentStroke.points.length > 10) {
+        // Visual feedback: glowing tip
+        const tip = points[points.length - 1];
+        canvasCtx.shadowBlur = 15;
+        canvasCtx.shadowColor = stroke.color;
+        canvasCtx.stroke();
+        canvasCtx.shadowBlur = 0;
+      } else {
+        canvasCtx.stroke();
+      }
+    }
+
+    // Start camera
     async function startCamera(facing) {
       if (currentStream) {
-        currentStream.getTracks().forEach(track => track.stop());
+        currentStream.getTracks().forEach(t => t.stop());
       }
       const constraints = {
-        video: {
-          facingMode: facing,
-          width: { ideal: window.innerWidth },
-          height: { ideal: window.innerHeight }
-        }
+        video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }
       };
       try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         currentStream = stream;
         videoElement.srcObject = stream;
         videoElement.play();
-        // Send frames in loop
-        async function sendFrame() {
-          if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
-            await hands.send({ image: videoElement });
-          }
-          requestAnimationFrame(sendFrame);
-        }
-        sendFrame();
+
+        // Wait for video to be ready
+        videoElement.onloadedmetadata = () => {
+          videoElement.play();
+          setupCanvas();
+          spawnInitialFlies();
+          animate();
+        };
       } catch (err) {
-        console.error('Error accessing camera:', err);
+        console.error("Camera error:", err);
+        alert("Cannot access camera. Please allow camera permission.");
       }
+    }
+
+    function setupCanvas() {
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
     }
 
     function toggleCamera() {
@@ -154,110 +205,139 @@
       canvasElement.classList.toggle('mirrored', isMirrored);
     }
 
-    function addFly() {
+    // Spawn a fly safely inside canvas
+    function spawnFly() {
+      const margin = 50;
       flies.push({
-        x: Math.random() * canvasElement.width,
-        y: Math.random() * canvasElement.height,
-        vx: (Math.random() - 0.5) * 4,
-        vy: (Math.random() - 0.5) * 4
+        x: margin + Math.random() * (canvasElement.width - 2 * margin),
+        y: margin + Math.random() * (canvasElement.height - 2 * margin),
+        vx: (Math.random() - 0.5) * 3,
+        vy: (Math.random() - 0.5) * 3
       });
     }
 
-    function onResults(results) {
-      // Resize canvas if needed
-      if (canvasElement.width !== videoElement.videoWidth || canvasElement.height !== videoElement.videoHeight) {
-        canvasElement.width = videoElement.videoWidth;
-        canvasElement.height = videoElement.videoHeight;
-        // Re-add flies if resized
-        flies = [];
-        for (let i = 0; i < 5; i++) addFly();
-      }
-
-      let ix = null, iy = null, tx = null, ty = null, dist = 0;
-      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        const landmarks = results.multiHandLandmarks[0];
-        const indexTip = landmarks[8];
-        const thumbTip = landmarks[4];
-
-        ix = (isMirrored ? 1 - indexTip.x : indexTip.x) * canvasElement.width;
-        iy = indexTip.y * canvasElement.height;
-        tx = (isMirrored ? 1 - thumbTip.x : thumbTip.x) * canvasElement.width;
-        ty = thumbTip.y * canvasElement.height;
-
-        dist = Math.hypot(ix - tx, iy - ty) / canvasElement.width;
-
-        if (dist > 0.05) { // Draw mode
-          if (currentStroke.points.length === 0 || 
-              Math.hypot(ix - currentStroke.points[currentStroke.points.length - 1].x, 
-                         iy - currentStroke.points[currentStroke.points.length - 1].y) > 3) { // Min distance for smoother lines
-            currentStroke.points.push({ x: ix, y: iy });
-          }
-        } else { // Pinch mode
-          if (currentStroke.points.length > 10) {
-            const first = currentStroke.points[0];
-            const last = currentStroke.points[currentStroke.points.length - 1];
-            const closeDist = Math.hypot(first.x - last.x, first.y - last.y);
-            if (closeDist < 50) {
-              const path = new Path2D();
-              path.moveTo(first.x, first.y);
-              for (let p of currentStroke.points.slice(1)) {
-                path.lineTo(p.x, p.y);
-              }
-              path.closePath();
-              let eliminated = 0;
-              flies = flies.filter(fly => {
-                if (canvasCtx.isPointInPath(path, fly.x, fly.y)) {
-                  eliminated++;
-                  return false;
-                }
-                return true;
-              });
-              score += eliminated;
-              // Circle disappears
-            } else {
-              strokes.push(currentStroke);
-            }
-          }
-          currentStroke = { points: [], color: currentColor, width: 5 };
-        }
-      }
-
-      // Update flies positions
-      for (let fly of flies) {
-        fly.x += fly.vx;
-        fly.y += fly.vy;
-        if (fly.x < 0 || fly.x > canvasElement.width) fly.vx *= -1;
-        if (fly.y < 0 || fly.y > canvasElement.height) fly.vy *= -1;
-      }
-
-      // Redraw everything
-      redraw();
-
-      // Visual feedback for finger tip
-      if (ix !== null) {
-        canvasCtx.beginPath();
-        canvasCtx.arc(ix, iy, 10, 0, 2 * Math.PI);
-        canvasCtx.fillStyle = dist > 0.05 ? 'green' : 'yellow';
-        canvasCtx.fill();
-      }
+    function spawnInitialFlies() {
+      flies = [];
+      for (let i = 0; i < 5; i++) spawnFly();
     }
 
+    // Animation loop for flies
+    function animate() {
+      updateFlies();
+      redraw();
+      requestAnimationFrame(animate);
+    }
+
+    function updateFlies() {
+      const w = canvasElement.width;
+      const h = canvasElement.height;
+      flies.forEach(fly => {
+        fly.x += fly.vx;
+        fly.y += fly.vy;
+        if (fly.x < 30 || fly.x > w - 30) fly.vx *= -1;
+        if (fly.y < 30 || fly.y > h - 30) fly.vy *= -1;
+        fly.x = Math.max(30, Math.min(w - 30, fly.x));
+        fly.y = Math.max(30, Math.min(h - 30, fly.y));
+      });
+    }
+
+    // MediaPipe Hand Tracking
+    function onResults(results) {
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        return;
+      }
+
+      const landmarks = results.multiHandLandmarks[0];
+      const indexTip = landmarks[8]; // Index fingertip
+      const thumbTip = landmarks[4]; // Thumb tip
+
+      const ix = (isMirrored ? 1 - indexTip.x : indexTip.x) * canvasElement.width;
+      const iy = indexTip.y * canvasElement.height;
+      const tx = (isMirrored ? 1 - thumbTip.x : thumbTip.x) * canvasElement.width;
+      const ty = thumbTip.y * canvasElement.height;
+
+      const pinchDist = Math.hypot(ix - tx, iy - ty) / canvasElement.width;
+
+      // Draw mode: fingers apart
+      if (pinchDist > 0.08) {
+        const last = currentStroke.points[currentStroke.points.length - 1];
+        const distToLast = last ? Math.hypot(ix - last.x, iy - last.y) : Infinity;
+
+        if (currentStroke.points.length === 0 || distToLast > 8) {
+          currentStroke.points.push({ x: ix, y: iy });
+        }
+      } 
+      // Pinch mode: check for closed circle
+      else {
+        if (currentStroke.points.length > 20) {
+          const first = currentStroke.points[0];
+          const last = currentStroke.points[currentStroke.points.length - 1];
+          const closeDist = Math.hypot(first.x - last.x, first.y - last.y);
+
+          if (closeDist < 60) {
+            // Closed path → check for flies inside
+            const path = new Path2D();
+            path.moveTo(first.x, first.y);
+            currentStroke.points.slice(1).forEach(p => path.lineTo(p.x, p.y));
+            path.closePath();
+
+            let caught = 0;
+            flies = flies.filter(fly => {
+              if (canvasCtx.isPointInPath(path, fly.x, fly.y)) {
+                caught++;
+                return false;
+              }
+              return true;
+            });
+            score += caught * 10;
+            updateScore();
+
+            // Circle disappears after catch
+          } else {
+            // Not closed → save stroke
+            strokes.push({ ...currentStroke });
+          }
+        }
+        // Reset current stroke
+        currentStroke = { points: [], color: currentColor, width: 6 };
+      }
+
+      // Visual feedback: finger tip
+      canvasCtx.beginPath();
+      canvasCtx.arc(ix, iy, 12, 0, 2 * Math.PI);
+      canvasCtx.fillStyle = pinchDist > 0.08 ? '#00ff00' : '#ffff00';
+      canvasCtx.fill();
+      canvasCtx.strokeStyle = 'white';
+      canvasCtx.lineWidth = 2;
+      canvasCtx.stroke();
+    }
+
+    // Initialize MediaPipe Hands
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
     });
+
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.6, // Slightly higher for better accuracy
-      minTrackingConfidence: 0.6, // Slightly higher for smoother tracking
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
     });
+
     hands.onResults(onResults);
 
-    // Initialize
-    for (let i = 0; i < 5; i++) addFly();
+    // Start everything
     startCamera(currentFacing);
     videoElement.classList.toggle('mirrored', isMirrored);
     canvasElement.classList.toggle('mirrored', isMirrored);
+
+    // Responsive resize
+    window.addEventListener('resize', () => {
+      if (videoElement.videoWidth > 0) {
+        setupCanvas();
+        redraw();
+      }
+    });
   </script>
 </body>
 </html>
