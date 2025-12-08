@@ -3,130 +3,127 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Draw on Camera</title>
+    <title>Finger Drawing with Camera</title>
+    <script src="https://cdn.jsdelivr.net/npm/handtrackjs@0.0.13/dist/handtrack.min.js"></script>
     <style>
-        body { margin:0; padding:0; background:#000; overflow:hidden; }
-        #container { position:relative; width:100vw; height:100vh; }
-        #video { position:absolute; width:100%; height:100%; object-fit:cover; }
-        #canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
+        body { margin:0; background:black; overflow:hidden; }
+        #video { width:100vw; height:100vh; object-fit:cover; }
+        #canvas { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; }
         #controls {
             position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
-            display:flex; gap:15px; z-index:10;
+            display:flex; gap:20px; z-index:10;
         }
         button {
-            width:60px; height:60px; border:none; border-radius:50%;
-            font-size:14px; color:white; font-weight:bold;
+            width:70px; height:70px; border-radius:50%; border:none; font-weight:bold; color:white;
         }
-        #clear { background:#fff; color:#000; width:80px; border-radius:30px; }
+        #clear { background:#333; width:100px; border-radius:40px; }
     </style>
 </head>
 <body>
 
-<div id="container">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
-</div>
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
 
 <div id="controls">
-    <button style="background:black">Black</button>
-    <button style="background:yellow;color:black">Yellow</button>
-    <button style="background:red">Red</button>
-    <button style="background:green">Green</button>
-    <button id="clear">CLEAR</button>
+    <button style="background:#000">Black</button>
+    <button style="background:#ffff00;color:#000">Yellow</button>
+    <button style="background:#ff0000">Red</button>
+    <button style="background:#00ff00">Green</button>
+    <button id="clear">CLEAR ALL</button>
 </div>
 
 <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    let currentColor = 'white';
-    let drawing = false;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-    // IMPORTANT: Force canvas size as soon as video is ready
-    video.addEventListener('loadedmetadata', () => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+    let model = null;
+    let currentColor = 'yellow';
+    let lastX = 0, lastY = 0;
+    let isDrawing = false;
+
+    // Load the hand detection model (very small & fast)
+    const modelParams = {
+        flipHorizontal: true,   // mirror the camera (selfie style)
+        maxNumBoxes: 1,         // detect only one hand/finger
+        scoreThreshold: 0.7,
+    };
+
+    handtrack.load(modelParams).then(lmodel => {
+        model = lmodel;
+        console.log("Hand model loaded!");
+        startVideo();
     });
 
-    // Also resize when the phone rotates or browser chrome hides/shows
-    window.addEventListener('resize', () => {
-        setTimeout(() => {
-            canvas.width = video.videoWidth || window.innerWidth;
-            canvas.height = video.videoHeight || window.innerHeight;
-        }, 300);
-    });
-
-    // Start camera (front camera on phone)
-    navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'user', width: 1280, height: 720 } 
-    })
-    .then(stream => {
-        video.srcObject = stream;
-        video.play();
-    })
-    .catch(err => {
-        alert("Camera error: " + err.message);
-    });
-
-    // ---------- DRAWING LOGIC ----------
-    function getTouchPos(e) {
-        const rect = canvas.getBoundingClientRect();
-        const touch = e.touches ? e.touches[0] : e;
-        return {
-            x: (touch.clientX - rect.left) * (canvas.width / rect.width),
-            y: (touch.clientY - rect.top) * (canvas.height / rect.height)
-        };
+    // Start camera
+    function startVideo() {
+        handtrack.startVideo(video).then(status => {
+            if (status) {
+                video.width = video.videoWidth;
+                video.height = video.videoHeight;
+                runDetection();
+            } else {
+                alert("Camera failed to start");
+            }
+        });
     }
 
-    function start(e) {
-        e.preventDefault();
-        drawing = true;
-        const pos = getTouchPos(e);
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y);
+    // Main loop - runs ~30 times per second
+    function runDetection() {
+        model.detect(video).then(predictions => {
+            if (predictions.length > 0) {
+                const bbox = predictions[0].bbox; // [x, y, width, height]
+                const centerX = bbox[0] + bbox[2]/2;
+                const centerY = bbox[1] + bbox[3]/2;
+
+                // Map camera coordinates to screen coordinates
+                const x = (centerX / video.videoWidth) * canvas.width;
+                const y = (centerY / video.videoHeight) * canvas.height;
+
+                // Draw a small circle so you see your fingertip
+                ctx.fillStyle = currentColor;
+                ctx.beginPath();
+                ctx.arc(x, y, 15, 0, Math.PI*2);
+                ctx.fill();
+
+                // Draw line only if finger moved more than a little
+                if (isDrawing && lastX && lastY) {
+                    ctx.lineWidth = 12;
+                    ctx.lineCap = 'round';
+                    ctx.strokeStyle = currentColor;
+                    ctx.beginPath();
+                    ctx.moveTo(lastX, lastY);
+                    ctx.lineTo(x, y);
+                    ctx.stroke();
+                }
+
+                lastX = x;
+                lastY = y;
+                isDrawing = true;
+            } else {
+                isDrawing = false; // finger left the frame
+            }
+
+            requestAnimationFrame(runDetection);
+        });
     }
-
-    function move(e) {
-        if (!drawing) return;
-        e.preventDefault();
-        const pos = getTouchPos(e);
-
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.lineWidth = 8;
-        ctx.lineCap = 'round';
-        ctx.strokeStyle = currentColor;
-        ctx.lineTo(pos.x, pos.y);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y);
-    }
-
-    function stop(e) {
-        e.preventDefault();
-        drawing = false;
-    }
-
-    // Touch events (phones)
-    canvas.addEventListener('touchstart', start);
-    canvas.addEventListener('touchmove', move);
-    canvas.addEventListener('touchend', stop);
-
-    // Mouse events (for desktop testing)
-    canvas.addEventListener('mousedown', start);
-    canvas.addEventListener('mousemove', move);
-    canvas.addEventListener('mouseup', stop);
-    canvas.addEventListener('mouseout', stop);
 
     // Color buttons
     document.querySelectorAll('#controls button:not(#clear)').forEach(btn => {
-        btn.addEventListener('click', () => {
-            currentColor = btn.style.backgroundColor;
-        });
+        btn.onclick = () => currentColor = btn.style.backgroundColor || btn.textContent.toLowerCase();
     });
 
     // Clear button
-    document.getElementById('clear').addEventListener('click', () => {
+    document.getElementById('clear').onclick = () => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+    };
+
+    // Resize canvas when rotating phone
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
     });
 </script>
 </body>
