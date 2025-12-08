@@ -1,330 +1,167 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Air Draw: Sticky Fly Trap Game</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; overflow: hidden; background: #000; }
-    .container { position: relative; width: 100vw; height: 100vh; }
-    .input_video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-    .output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-    .mirrored { transform: scaleX(-1); }
-
-    .instructions {
-      position: absolute; top: 15px; left: 15px; color: white; background: rgba(0,0,0,0.7);
-      padding: 12px 16px; border-radius: 10px; z-index: 10; max-width: 320px; font-size: 14px;
-      line-height: 1.5;
-    }
-    .score {
-      position: absolute; top: 15px; right: 15px; color: #fff; background: rgba(0,0,0,0.7);
-      padding: 10px 16px; border-radius: 10px; z-index: 10; font-size: 20px; font-weight: bold;
-    }
-
-    .controls {
-      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-      z-index: 10; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
-    }
-    button, select {
-      padding: 12px 20px; font-size: 16px; background: #007bff; color: white;
-      border: none; border-radius: 8px; cursor: pointer; touch-action: manipulation;
-      transition: 0.2s;
-    }
-    button:hover, select:hover { background: #0056b3; transform: translateY(-1px); }
-    select { appearance: none; background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3e%3cpath d='M7 10l5 5 5-5z'/%3e%3c/svg%3e"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 40px; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Drawing Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+        }
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 70vh;
+            overflow: hidden;
+        }
+        #video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            touch-action: none; /* Prevent default touch behaviors */
+        }
+        #controls {
+            margin-top: 10px;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            color: white;
+        }
+        #black { background-color: black; }
+        #yellow { background-color: yellow; color: black; }
+        #red { background-color: red; }
+        #green { background-color: green; }
+        #clear { background-color: gray; }
+    </style>
 </head>
 <body>
-  <div class="container">
-    <video class="input_video"></video>
-    <canvas class="output_canvas"></canvas>
-
-    <div class="instructions">
-      <strong>Sticky Fly Trap!</strong><br>
-      • Draw a <strong>loop</strong> around flies<br>
-      • They get <strong>trapped forever</strong><br>
-      • Circle disappears after catch<br>
-      • +10 points per fly
+    <div id="container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+    </div>
+    <div id="controls">
+        <button id="black">Black</button>
+        <button id="yellow">Yellow</button>
+        <button id="red">Red</button>
+        <button id="green">Green</button>
+        <button id="clear">Clear Canvas</button>
     </div>
 
-    <div class="score">Score: <span id="score">0</span></div>
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let drawing = false;
+        let currentColor = 'black';
 
-    <div class="controls">
-      <button onclick="clearCanvas()">Clear All</button>
-      <button onclick="toggleCamera()">Flip Camera</button>
-      <button onclick="toggleMirror()">Toggle Mirror</button>
-      <select onchange="changeColor(this.value)">
-        <option value="red">Red</option>
-        <option value="blue" selected>Blue</option>
-        <option value="green">Green</option>
-        <option value="yellow">Yellow</option>
-        <option value="purple">Purple</option>
-      </select>
-    </div>
-  </div>
-
-  <script type="module">
-    const videoElement = document.querySelector('.input_video');
-    const canvasElement = document.querySelector('.output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
-    const scoreElement = document.getElementById('score');
-
-    let currentFacing = 'user';
-    let isMirrored = true;
-    let currentStream = null;
-    let currentColor = 'blue';
-    let strokes = [];
-    let currentStroke = { points: [], color: currentColor, width: 6 };
-    let flies = [];
-    let trappedFlies = [];
-    let score = 0;
-
-    // === SCORE & COLOR ===
-    function updateScore() {
-      scoreElement.textContent = score;
-    }
-
-    function changeColor(color) {
-      currentColor = color;
-      if (currentStroke.points.length > 0) currentStroke.color = color;
-    }
-
-    // === CLEAR CANVAS ===
-    function clearCanvas() {
-      strokes = [];
-      currentStroke = { points: [], color: currentColor, width: 6 };
-      flies = [];
-      trappedFlies = [];
-      score = 0;
-      updateScore();
-      for (let i = 0; i < 5; i++) spawnFly();
-      redraw();
-    }
-
-    // === REDRAW EVERYTHING ===
-    function redraw() {
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-      // Draw completed strokes
-      strokes.forEach(stroke => drawStroke(stroke));
-
-      // Draw current stroke (live)
-      if (currentStroke.points.length > 1) {
-        drawStroke(currentStroke, true);
-      }
-
-      // Draw moving flies
-      flies.forEach(fly => {
-        canvasCtx.font = '32px Arial';
-        canvasCtx.fillText('fly', fly.x - 16, fly.y + 10);
-      });
-
-      // Draw trapped flies (frozen, red)
-      trappedFlies.forEach(fly => {
-        canvasCtx.font = '32px Arial';
-        canvasCtx.fillStyle = '#ff4444';
-        canvasCtx.fillText('fly', fly.x - 16, fly.y + 10);
-        // Optional: add a tiny web effect
-        canvasCtx.strokeStyle = '#ff444430';
-        canvasCtx.lineWidth = 2;
-        canvasCtx.beginPath();
-        canvasCtx.arc(fly.x, fly.y, 25, 0, Math.PI * 2);
-        canvasCtx.stroke();
-      });
-    }
-
-    function drawStroke(stroke, isCurrent = false) {
-      if (stroke.points.length < 2) return;
-
-      canvasCtx.beginPath();
-      canvasCtx.strokeStyle = stroke.color;
-      canvasCtx.lineWidth = stroke.width;
-      canvasCtx.lineCap = 'round';
-      canvasCtx.lineJoin = 'round';
-
-      const p = stroke.points;
-      canvasCtx.moveTo(p[0].x, p[0].y);
-
-      for (let i = 1; i < p.length - 1; i++) {
-        const xc = (p[i].x + p[i + 1].x) / 2;
-        const yc = (p[i].y + p[i + 1].y) / 2;
-        canvasCtx.quadraticCurveTo(p[i].x, p[i].y, xc, yc);
-      }
-      if (p.length > 1) {
-        const last = p.length - 1;
-        canvasCtx.quadraticCurveTo(p[last - 1].x, p[last - 1].y, p[last].x, p[last].y);
-      }
-
-      if (isCurrent && p.length > 15) {
-        canvasCtx.shadowBlur = 20;
-        canvasCtx.shadowColor = stroke.color;
-        canvasCtx.stroke();
-        canvasCtx.shadowBlur = 0;
-      } else {
-        canvasCtx.stroke();
-      }
-    }
-
-    // === CAMERA ===
-    async function startCamera(facing) {
-      if (currentStream) currentStream.getTracks().forEach(t => t.stop());
-      const constraints = { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } };
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        currentStream = stream;
-        videoElement.srcObject = stream;
-        videoElement.play();
-
-        videoElement.onloadedmetadata = () => {
-          setupCanvas();
-          spawnInitialFlies();
-          animate();
-        };
-      } catch (err) {
-        console.error("Camera error:", err);
-        alert("Please allow camera access to play!");
-      }
-    }
-
-    function setupCanvas() {
-      canvasElement.width = videoElement.videoWidth;
-      canvasElement.height = videoElement.videoHeight;
-    }
-
-    function toggleCamera() {
-      currentFacing = currentFacing === 'user' ? 'environment' : 'user';
-      startCamera(currentFacing);
-    }
-
-    function toggleMirror() {
-      isMirrored = !isMirrored;
-      videoElement.classList.toggle('mirrored', isMirrored);
-      canvasElement.classList.toggle('mirrored', isMirrored);
-    }
-
-    // === FLIES ===
-    function spawnFly() {
-      const margin = 70;
-      const w = canvasElement.width, h = canvasElement.height;
-      flies.push({
-        x: margin + Math.random() * (w - 2 * margin),
-        y: margin + Math.random() * (h - 2 * margin),
-        vx: (Math.random() - 0.5) * 3.5,
-        vy: (Math.random() - 0.5) * 3.5
-      });
-    }
-
-    function spawnInitialFlies() {
-      flies = [];
-      trappedFlies = [];
-      for (let i = 0; i < 5; i++) spawnFly();
-    }
-
-    function updateFlies() {
-      const w = canvasElement.width, h = canvasElement.height;
-      flies.forEach(fly => {
-        fly.x += fly.vx;
-        fly.y += fly.vy;
-        if (fly.x < 50 || fly.x > w - 50) fly.vx *= -1;
-        if (fly.y < 50 || fly.y > h - 50) fly.vy *= -1;
-        fly.x = Math.max(50, Math.min(w - 50, fly.x));
-        fly.y = Math.max(50, Math.min(h - 50, fly.y));
-      });
-    }
-
-    function animate() {
-      updateFlies();
-      redraw();
-      requestAnimationFrame(animate);
-    }
-
-    // === HAND TRACKING ===
-    function onResults(results) {
-      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
-
-      const landmarks = results.multiHandLandmarks[0];
-      const indexTip = landmarks[8]; // Index finger tip
-
-      const ix = (isMirrored ? 1 - indexTip.x : indexTip.x) * canvasElement.width;
-      const iy = indexTip.y * canvasElement.height;
-
-      // Always draw with index finger
-      const last = currentStroke.points[currentStroke.points.length - 1];
-      const distToLast = last ? Math.hypot(ix - last.x, iy - last.y) : Infinity;
-      if (currentStroke.points.length === 0 || distToLast > 12) {
-        currentStroke.points.push({ x: ix, y: iy });
-      }
-
-      // AUTO-CLOSE DETECTION (NO PINCH!)
-      if (currentStroke.points.length > 30) {
-        const first = currentStroke.points[0];
-        const last = currentStroke.points[currentStroke.points.length - 1];
-        const closeDist = Math.hypot(first.x - last.x, first.y - last.y);
-
-        if (closeDist < 80) {
-          // Create closed path
-          const path = new Path2D();
-          path.moveTo(first.x, first.y);
-          currentStroke.points.slice(1).forEach(p => path.lineTo(p.x, p.y));
-          path.closePath();
-
-          let caught = 0;
-          flies = flies.filter(fly => {
-            if (canvasCtx.isPointInPath(path, fly.x, fly.y)) {
-              trappedFlies.push({ x: fly.x, y: fly.y });
-              caught++;
-              return false;
-            }
-            return true;
-          });
-
-          if (caught > 0) {
-            score += caught * 10;
-            updateScore();
-          }
-
-          // Reset stroke (circle disappears)
-          currentStroke = { points: [], color: currentColor, width: 6 };
+        // Set canvas size to match video container
+        function resizeCanvas() {
+            canvas.width = video.videoWidth || window.innerWidth;
+            canvas.height = video.videoHeight || window.innerHeight * 0.7;
         }
-      }
 
-      // Finger tip indicator
-      canvasCtx.beginPath();
-      canvasCtx.arc(ix, iy, 16, 0, Math.PI * 2);
-      canvasCtx.fillStyle = '#00ff00';
-      canvasCtx.fill();
-      canvasCtx.strokeStyle = 'white';
-      canvasCtx.lineWidth = 3;
-      canvasCtx.stroke();
-    }
+        // Access camera
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user' } // 'user' for front camera, 'environment' for rear
+                });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    resizeCanvas();
+                    video.play();
+                };
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                alert('Could not access camera. Please allow camera permissions.');
+            }
+        }
 
-    // === MEDIAPIPE HANDS ===
-    const hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-    });
+        // Drawing functions
+        function startDrawing(e) {
+            drawing = true;
+            draw(e);
+        }
 
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
-    });
+        function stopDrawing() {
+            drawing = false;
+            ctx.beginPath();
+        }
 
-    hands.onResults(onResults);
+        function draw(e) {
+            if (!drawing) return;
 
-    // === START ===
-    startCamera(currentFacing);
-    videoElement.classList.toggle('mirrored', isMirrored);
-    canvasElement.classList.toggle('mirrored', isMirrored);
+            const rect = canvas.getBoundingClientRect();
+            let x, y;
 
-    window.addEventListener('resize', () => {
-      if (videoElement.videoWidth > 0) setupCanvas();
-    });
-  </script>
+            if (e.type.startsWith('touch')) {
+                x = e.touches[0].clientX - rect.left;
+                y = e.touches[0].clientY - rect.top;
+            } else {
+                x = e.clientX - rect.left;
+                y = e.clientY - rect.top;
+            }
+
+            ctx.lineWidth = 5;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = currentColor;
+
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        // Event listeners for drawing
+        canvas.addEventListener('touchstart', startDrawing);
+        canvas.addEventListener('touchmove', draw);
+        canvas.addEventListener('touchend', stopDrawing);
+        canvas.addEventListener('touchcancel', stopDrawing);
+
+        // For desktop testing (optional)
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+
+        // Color buttons
+        document.getElementById('black').addEventListener('click', () => currentColor = 'black');
+        document.getElementById('yellow').addEventListener('click', () => currentColor = 'yellow');
+        document.getElementById('red').addEventListener('click', () => currentColor = 'red');
+        document.getElementById('green').addEventListener('click', () => currentColor = 'green');
+
+        // Clear button
+        document.getElementById('clear').addEventListener('click', () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', resizeCanvas);
+
+        // Initialize
+        initCamera();
+    </script>
 </body>
 </html>
