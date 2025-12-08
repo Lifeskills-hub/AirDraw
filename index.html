@@ -2,166 +2,132 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Camera Drawing Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Draw on Camera</title>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            background-color: #f0f0f0;
-        }
-        #container {
-            position: relative;
-            width: 100vw;
-            height: 70vh;
-            overflow: hidden;
-        }
-        #video {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        #canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            touch-action: none; /* Prevent default touch behaviors */
-        }
+        body { margin:0; padding:0; background:#000; overflow:hidden; }
+        #container { position:relative; width:100vw; height:100vh; }
+        #video { position:absolute; width:100%; height:100%; object-fit:cover; }
+        #canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
         #controls {
-            margin-top: 10px;
-            display: flex;
-            justify-content: center;
-            gap: 10px;
+            position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+            display:flex; gap:15px; z-index:10;
         }
         button {
-            padding: 10px 20px;
-            font-size: 16px;
-            cursor: pointer;
-            border: none;
-            border-radius: 5px;
-            color: white;
+            width:60px; height:60px; border:none; border-radius:50%;
+            font-size:14px; color:white; font-weight:bold;
         }
-        #black { background-color: black; }
-        #yellow { background-color: yellow; color: black; }
-        #red { background-color: red; }
-        #green { background-color: green; }
-        #clear { background-color: gray; }
+        #clear { background:#fff; color:#000; width:80px; border-radius:30px; }
     </style>
 </head>
 <body>
-    <div id="container">
-        <video id="video" autoplay playsinline></video>
-        <canvas id="canvas"></canvas>
-    </div>
-    <div id="controls">
-        <button id="black">Black</button>
-        <button id="yellow">Yellow</button>
-        <button id="red">Red</button>
-        <button id="green">Green</button>
-        <button id="clear">Clear Canvas</button>
-    </div>
 
-    <script>
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        let drawing = false;
-        let currentColor = 'black';
+<div id="container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+</div>
 
-        // Set canvas size to match video container
-        function resizeCanvas() {
+<div id="controls">
+    <button style="background:black">Black</button>
+    <button style="background:yellow;color:black">Yellow</button>
+    <button style="background:red">Red</button>
+    <button style="background:green">Green</button>
+    <button id="clear">CLEAR</button>
+</div>
+
+<script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let currentColor = 'white';
+    let drawing = false;
+
+    // IMPORTANT: Force canvas size as soon as video is ready
+    video.addEventListener('loadedmetadata', () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+    });
+
+    // Also resize when the phone rotates or browser chrome hides/shows
+    window.addEventListener('resize', () => {
+        setTimeout(() => {
             canvas.width = video.videoWidth || window.innerWidth;
-            canvas.height = video.videoHeight || window.innerHeight * 0.7;
-        }
+            canvas.height = video.videoHeight || window.innerHeight;
+        }, 300);
+    });
 
-        // Access camera
-        async function initCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'user' } // 'user' for front camera, 'environment' for rear
-                });
-                video.srcObject = stream;
-                video.onloadedmetadata = () => {
-                    resizeCanvas();
-                    video.play();
-                };
-            } catch (err) {
-                console.error('Error accessing camera:', err);
-                alert('Could not access camera. Please allow camera permissions.');
-            }
-        }
+    // Start camera (front camera on phone)
+    navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'user', width: 1280, height: 720 } 
+    })
+    .then(stream => {
+        video.srcObject = stream;
+        video.play();
+    })
+    .catch(err => {
+        alert("Camera error: " + err.message);
+    });
 
-        // Drawing functions
-        function startDrawing(e) {
-            drawing = true;
-            draw(e);
-        }
+    // ---------- DRAWING LOGIC ----------
+    function getTouchPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches ? e.touches[0] : e;
+        return {
+            x: (touch.clientX - rect.left) * (canvas.width / rect.width),
+            y: (touch.clientY - rect.top) * (canvas.height / rect.height)
+        };
+    }
 
-        function stopDrawing() {
-            drawing = false;
-            ctx.beginPath();
-        }
+    function start(e) {
+        e.preventDefault();
+        drawing = true;
+        const pos = getTouchPos(e);
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+    }
 
-        function draw(e) {
-            if (!drawing) return;
+    function move(e) {
+        if (!drawing) return;
+        e.preventDefault();
+        const pos = getTouchPos(e);
 
-            const rect = canvas.getBoundingClientRect();
-            let x, y;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.lineWidth = 8;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = currentColor;
+        ctx.lineTo(pos.x, pos.y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+    }
 
-            if (e.type.startsWith('touch')) {
-                x = e.touches[0].clientX - rect.left;
-                y = e.touches[0].clientY - rect.top;
-            } else {
-                x = e.clientX - rect.left;
-                y = e.clientY - rect.top;
-            }
+    function stop(e) {
+        e.preventDefault();
+        drawing = false;
+    }
 
-            ctx.lineWidth = 5;
-            ctx.lineCap = 'round';
-            ctx.strokeStyle = currentColor;
+    // Touch events (phones)
+    canvas.addEventListener('touchstart', start);
+    canvas.addEventListener('touchmove', move);
+    canvas.addEventListener('touchend', stop);
 
-            ctx.lineTo(x, y);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-        }
+    // Mouse events (for desktop testing)
+    canvas.addEventListener('mousedown', start);
+    canvas.addEventListener('mousemove', move);
+    canvas.addEventListener('mouseup', stop);
+    canvas.addEventListener('mouseout', stop);
 
-        // Event listeners for drawing
-        canvas.addEventListener('touchstart', startDrawing);
-        canvas.addEventListener('touchmove', draw);
-        canvas.addEventListener('touchend', stopDrawing);
-        canvas.addEventListener('touchcancel', stopDrawing);
-
-        // For desktop testing (optional)
-        canvas.addEventListener('mousedown', startDrawing);
-        canvas.addEventListener('mousemove', draw);
-        canvas.addEventListener('mouseup', stopDrawing);
-        canvas.addEventListener('mouseout', stopDrawing);
-
-        // Color buttons
-        document.getElementById('black').addEventListener('click', () => currentColor = 'black');
-        document.getElementById('yellow').addEventListener('click', () => currentColor = 'yellow');
-        document.getElementById('red').addEventListener('click', () => currentColor = 'red');
-        document.getElementById('green').addEventListener('click', () => currentColor = 'green');
-
-        // Clear button
-        document.getElementById('clear').addEventListener('click', () => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Color buttons
+    document.querySelectorAll('#controls button:not(#clear)').forEach(btn => {
+        btn.addEventListener('click', () => {
+            currentColor = btn.style.backgroundColor;
         });
+    });
 
-        // Handle window resize
-        window.addEventListener('resize', resizeCanvas);
-
-        // Initialize
-        initCamera();
-    </script>
+    // Clear button
+    document.getElementById('clear').addEventListener('click', () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    });
+</script>
 </body>
 </html>
