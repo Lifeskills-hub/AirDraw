@@ -1,54 +1,34 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>AirDraw - MediaPipe Hands (Fixed)</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AirDraw Pro - Ultra Smooth</title>
 
-  <!-- Updated MediaPipe Hands via TFJS - Official & Working -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@latest/dist/tf-core.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@latest/dist/tf-converter.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@latest/dist/tf-backend-webgl.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.1/dist/hand-pose-detection.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
 
   <style>
-    body { margin:0; background:#000; overflow:hidden; font-family:sans-serif; touch-action:none; }
-    #video { width:100vw; height:100vh; object-fit:cover; transform:scaleX(-1); } /* Mirror video */
+    body { margin:0; background:#000; overflow:hidden; touch-action:none; }
+    #video { width:100vw; height:100vh; object-fit:cover; transform:scaleX(-1); }
     #canvas { position:fixed; top:0; left:0; width:100%; height:100%; transform:scaleX(-1); pointer-events:none; }
-    #controls {
-      position:fixed; bottom:30px; left:50%; transform:translateX(-50%);
-      display:flex; gap:18px; z-index:10;
-    }
-    button {
-      width:70px; height:70px; border-radius:50%; border:none; font-weight:bold; color:white; 
-      box-shadow:0 4px 15px rgba(0,0,0,0.5); touch-action:manipulation;
-      cursor:pointer;
-    }
-    #clear { background:#444; width:120px; border-radius:40px; }
-    #status {
-      position:fixed; top:20px; left:50%; transform:translateX(-50%);
-      color:white; background:rgba(0,0,0,0.7); padding:10px 20px; border-radius:8px; z-index:10;
-      font-size:16px;
-    }
-    #debug {
-      position:fixed; top:80px; left:50%; transform:translateX(-50%);
-      color:lime; background:rgba(0,0,0,0.7); padding:10px; border-radius:8px; z-index:10;
-      font-size:14px; max-width:300px;
-    }
+    button { width:70px; height:70px; border-radius:50%; border:none; box-shadow:0 4px 20px rgba(0,0,0,0.6); font-weight:bold; color:white; }
+    #controls { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); display:flex; gap:18px; z-index:10; }
+    #clear { background:#333; width:120px; border-radius:40px; }
+    #status { position:fixed; top:20px; left:50%; transform:translateX(-50%); color:white; background:rgba(0,0,0,0.7); padding:10px 20px; border-radius:10px; z-index:10; }
   </style>
 </head>
 <body>
-
 <video id="video" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
-<div id="status">Loading MediaPipe Hands...</div>
-<div id="debug">Debug info will appear here</div>
-
+<div id="status">Loading ultra-smooth AirDraw...</div>
 <div id="controls">
-  <button style="background:#ffffff; color:#000">White</button>
-  <button style="background:#ffff00; color:#000">Yellow</button>
-  <button style="background:#ff0066">Pink</button>
+  <button style="background:#fff;color:#000">White</button>
+  <button style="background:#ffff00;color:#000">Yellow</button>
+  <button style="background:#ff1493">Pink</button>
   <button style="background:#00ffff">Cyan</button>
   <button style="background:#ff6600">Orange</button>
   <button id="clear">CLEAR</button>
@@ -59,169 +39,102 @@
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d');
   const status = document.getElementById('status');
-  const debug = document.getElementById('debug');
+  canvas.width = innerWidth; canvas.height = innerHeight;
+
+  let detector, currentColor = '#ffff00';
   
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  // Ultra-smooth variables
+  let smoothX = 0, smoothY = 0;
+  let lastDrawX = 0, lastDrawY = 0;
+  const SMOOTHING = 0.65;        // 0 = raw, 1 = super smooth
+  const MIN_MOVE = 10;           // Only draw if moved this many pixels
 
-  let detector;
-  let currentColor = '#ffff00';
-  let lastX = null, lastY = null;
-  let isDrawing = false;
-
-  // Index finger tip = landmark 8 (confirmed from docs)
-  const FINGER_TIP_INDEX = 8;
+  const TIP = 8; // index finger tip
 
   async function init() {
-    status.textContent = "Loading model...";
-    
-    // Set WebGL backend
     await tf.setBackend('webgl');
-    await tf.ready();
-
     const model = handPoseDetection.SupportedModels.MediaPipeHands;
-    const detectorConfig = {
-      runtime: 'mediapipe',  // Use MediaPipe runtime (more reliable)
-      modelType: 'full',     // Better accuracy
+    detector = await handPoseDetection.createDetector(model, {
+      runtime: 'mediapipe',
+      modelType: 'full',
       maxHands: 1,
-      solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands',
+      solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands'
+    });
+
+    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"}});
+    video.srcObject = stream;
+    video.onloadedmetadata = () => {
+      video.play();
+      status.textContent = "✨ Ultra-smooth drawing ready! Use index finger";
+      requestAnimationFrame(loop);
     };
-
-    try {
-      detector = await handPoseDetection.createDetector(model, detectorConfig);
-      status.textContent = "Model loaded! Starting camera...";
-      console.log('Detector ready!');
-      startCamera();
-    } catch (err) {
-      status.textContent = "Model failed: " + err.message;
-      console.error(err);
-    }
   }
 
-  async function startCamera() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: "user", 
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
-        audio: false
-      });
-      video.srcObject = stream;
-      
-      video.onloadedmetadata = () => {
-        video.play();
-        status.textContent = "✅ Draw with INDEX FINGER! Hold it steady in frame.";
-        debug.textContent = "Camera ready. Show your hand!";
-        requestAnimationFrame(detectHands);
-      };
-    } catch (err) {
-      status.textContent = "Camera error: " + err.message;
-    }
-  }
-
-  async function detectHands() {
-    if (!detector || !video.videoWidth) {
-      requestAnimationFrame(detectHands);
-      return;
-    }
-
-    // Pass flipHorizontal: true to match mirrored video
-    const hands = await detector.estimateHands(video, { flipHorizontal: true });
-
-    // DON'T clear canvas - keep drawings! Only clear on button.
-    // ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    debug.textContent = `Hands detected: ${hands.length}`;
-
+  async function loop() {
+    const hands = await detector.estimateHands(video, {flipHorizontal: true});
+    
     if (hands.length > 0) {
-      const keypoints = hands[0].keypoints;  // 2D keypoints in VIDEO pixel coords
-      const tip = keypoints[FINGER_TIP_INDEX];
+      const tip = hands[0].keypoints[TIP];
+      
+      // 1. Exponential smoothing (magic!)
+      smoothX = smoothX * SMOOTHING + tip.x * (1 - SMOOTHING);
+      smoothY = smoothY * SMOOTHING + tip.y * (1 - SMOOTHING);
 
-      // Map video pixels directly to canvas pixels (perfect match!)
-      const x = tip.x;
-      const y = tip.y;
-
-      // Draw glowing fingertip cursor
-      ctx.save();
+      // 2. Draw glowing cursor
       ctx.fillStyle = currentColor;
       ctx.shadowColor = currentColor;
-      ctx.shadowBlur = 25;
+      ctx.shadowBlur = 30;
       ctx.beginPath();
-      ctx.arc(x, y, 20, 0, Math.PI * 2);
+      ctx.arc(smoothX, smoothY, 22, 0, Math.PI*2);
       ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.restore();
 
-      // Draw smooth line trail
-      if (isDrawing && lastX !== null && lastY !== null) {
-        ctx.lineWidth = 18;
+      // 3. Only draw line when moved enough (reduces jitter + lag)
+      const dx = smoothX - lastDrawX;
+      const dy = smoothY - lastDrawY;
+      if (Math.hypot(dx, dy) > MIN_MOVE) {
+        ctx.lineWidth = 20;
         ctx.lineCap = 'round';
-        ctx.strokeStyle = currentColor;
         ctx.lineJoin = 'round';
+        ctx.strokeStyle = currentColor;
         ctx.beginPath();
-        ctx.moveTo(lastX, lastY);
-        ctx.lineTo(x, y);
+        ctx.moveTo(lastDrawX, lastDrawY);
+        ctx.lineTo(smoothX, smoothY);
         ctx.stroke();
+
+        lastDrawX = smoothX;
+        lastDrawY = smoothY;
       }
-
-      lastX = x;
-      lastY = y;
-      isDrawing = true;
-
-      debug.textContent = `Hands: ${hands.length} | Tip: (${Math.round(x)}, ${Math.round(y)})`;
     } else {
-      isDrawing = false;
-      lastX = null;
-      lastY = null;
-      debug.textContent = `Hands: ${hands.length} | Show your hand!`;
+      // Reset when hand leaves frame
+      smoothX = smoothY = lastDrawX = lastDrawY = 0;
     }
 
-    requestAnimationFrame(detectHands);
+    requestAnimationFrame(loop);
   }
 
-  // FIXED: Color buttons with touch support
-  document.querySelectorAll('#controls button:not(#clear)').forEach(btn => {
-    // Mouse + Touch events
-    const setColor = (e) => {
-      e.preventDefault();
-      currentColor = btn.style.backgroundColor;
-      // Convert rgb to hex
+  // Color buttons
+  document.querySelectorAll('#controls button:not(#clear)').forEach(b => {
+    b.onclick = b.ontouchend = () => {
+      currentColor = getComputedStyle(b).backgroundColor;
       if (currentColor.startsWith('rgb')) {
-        const rgb = currentColor.match(/\d+/g).map(Number);
-        currentColor = '#' + rgb.map(n => n.toString(16).padStart(2, '0')).join('');
+        const r = currentColor.match(/\d+/g);
+        currentColor = '#' + [+r[0],+r[1],+r[2]].map(x=>x.toString(16).padStart(2,'0')).join('');
       }
-      console.log('Color:', currentColor);
-      status.textContent = `Color: ${currentColor} | Draw with INDEX finger!`;
     };
-    
-    btn.addEventListener('click', setColor);
-    btn.addEventListener('touchend', setColor);
   });
 
-  // Clear button
-  document.getElementById('clear').addEventListener('click', () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    lastX = null; lastY = null; isDrawing = false;
-  });
-  document.getElementById('clear').addEventListener('touchend', (e) => {
-    e.preventDefault();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    lastX = null; lastY = null; isDrawing = false;
-  });
+  document.getElementById('clear').onclick = () => {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    lastDrawX = lastDrawY = 0;
+  };
 
-  // Resize handler
-  window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-  });
+  window.onresize = () => {
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+  };
 
-  // Start app
-  init().catch(err => {
-    status.textContent = "Init error: " + err.message;
-    console.error(err);
-  });
+  init();
 </script>
 </body>
 </html>
