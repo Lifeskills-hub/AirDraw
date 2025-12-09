@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Finger Drawing with Camera</title>
     
-    <!-- WORKING VERSION - Fixed & maintained fork -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensor4all/handtrack.js@0.0.16/dist/handtrack.min.js"></script>
+    <!-- Official handtrackjs - this DEFINES 'handtrack' -->
+    <script src="https://cdn.jsdelivr.net/npm/handtrackjs@0.0.13/dist/handtrack.min.js"></script>
     
     <style>
         body { margin:0; background:black; overflow:hidden; }
@@ -20,11 +20,13 @@
             width:70px; height:70px; border-radius:50%; border:none; font-weight:bold; color:white;
         }
         #clear { background:#333; width:100px; border-radius:40px; }
+        #status { position:fixed; top:20px; left:50%; transform:translateX(-50%); color:white; z-index:10; }
     </style>
 </head>
 <body>
 <video id="video" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
+<div id="status">Loading model...</div>
 <div id="controls">
     <button style="background:#000">Black</button>
     <button style="background:#ffff00;color:#000">Yellow</button>
@@ -37,64 +39,81 @@
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
+    const status = document.getElementById('status');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
     let model = null;
-    let currentColor = 'yellow';
+    let currentColor = '#ffff00'; // Use hex for consistency
     let lastX = 0, lastY = 0;
     let isDrawing = false;
 
+    // Model params with PATCHED model URL to a working mirror (fixes 404s)
     const modelParams = {
-        flipHorizontal: true,
-        maxNumBoxes: 1,
+        flipHorizontal: true, // Mirror for selfie view
+        maxNumBoxes: 1, // One hand max
         iouThreshold: 0.5,
         scoreThreshold: 0.7,
+        modelUrl: 'https://github.com/victordibia/handtrack.js/raw/master/models/' // Working mirror base
     };
 
-    // This will now work!
+    // Check if handtrack is defined (library loaded)
+    if (typeof handtrack === 'undefined') {
+        status.textContent = 'Error: handtrack library failed to load. Check network.';
+        throw new Error('handtrack not defined');
+    }
+
+    status.textContent = 'Loading hand model...';
     handtrack.load(modelParams).then(lmodel => {
         model = lmodel;
-        console.log("Handtrack model loaded!");
+        status.textContent = 'Model loaded! Starting camera...';
+        console.log('Handtrack model loaded successfully!');
         startVideo();
     }).catch(err => {
-        console.error("Failed to load model:", err);
-        alert("Failed to load hand detection model. Check console.");
+        status.textContent = 'Model load failed: ' + err.message + '. Try refreshing.';
+        console.error('Model load error:', err);
     });
 
     function startVideo() {
         handtrack.startVideo(video).then(status => {
             if (status) {
-                console.log("Camera started");
+                console.log('Camera started');
+                status.textContent = 'Draw with your finger! (Hold hand in frame)';
                 runDetection();
             } else {
-                alert("Please allow camera access");
+                status.textContent = 'Camera access denied. Please allow.';
             }
         });
     }
 
     function runDetection() {
-        if (!model) return;
+        if (!model) {
+            requestAnimationFrame(runDetection);
+            return;
+        }
 
         model.detect(video).then(predictions => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height); // optional: remove trails for cleaner look
+            // Clear canvas each frame? No—keep drawings persistent. Only clear on button.
+            // ctx.clearRect(0, 0, canvas.width, canvas.height); // Uncomment for no trails
+
             if (predictions.length > 0) {
                 const bbox = predictions[0].bbox; // [x, y, width, height]
                 const centerX = bbox[0] + bbox[2] / 2;
                 const centerY = bbox[1] + bbox[3] / 2;
 
-                const x = (centerX / video.videoWidth) * canvas.width;
+                // Map to canvas coords (flipped due to mirror)
+                const x = (1 - centerX / video.videoWidth) * canvas.width; // Flip X for mirror
                 const y = (centerY / video.videoHeight) * canvas.height;
 
-                // Visual feedback dot
+                // Draw fingertip indicator
                 ctx.fillStyle = currentColor;
                 ctx.beginPath();
-                ctx.arc(x, y, 18, 0, Math.PI * 2);
+                ctx.arc(x, y, 15, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Draw line if moving
+                // Draw trail line if moving
                 if (isDrawing && lastX && lastY) {
-                    ctx.lineWidth = 14;
+                    ctx.lineWidth = 12;
                     ctx.lineCap = 'round';
                     ctx.strokeStyle = currentColor;
                     ctx.beginPath();
@@ -108,28 +127,43 @@
                 isDrawing = true;
             } else {
                 isDrawing = false;
+                lastX = 0;
+                lastY = 0;
             }
 
+            requestAnimationFrame(runDetection);
+        }).catch(err => {
+            console.error('Detection error:', err);
             requestAnimationFrame(runDetection);
         });
     }
 
-    // Color buttons
+    // Color buttons (use hex)
     document.querySelectorAll('#controls button:not(#clear)').forEach(btn => {
         btn.onclick = () => {
             currentColor = btn.style.backgroundColor;
-            if (currentColor === 'black') currentColor = '#000';
-            if (currentColor === 'rgb(255, 255, 0)') currentColor = 'yellow'; // fix yellow
+            if (currentColor === 'black') currentColor = '#000000';
+            if (currentColor === 'rgb(255, 255, 0)') currentColor = '#ffff00';
+            if (currentColor === 'rgb(255, 0, 0)') currentColor = '#ff0000';
+            if (currentColor === 'rgb(0, 255, 0)') currentColor = '#00ff00';
+            console.log('Color changed to:', currentColor);
         };
     });
 
+    // Clear button
     document.getElementById('clear').onclick = () => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        lastX = 0;
+        lastY = 0;
+        isDrawing = false;
     };
 
+    // Handle resize (e.g., phone rotation)
     window.addEventListener('resize', () => {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
+        video.width = window.innerWidth;
+        video.height = window.innerHeight;
     });
 </script>
 </body>
