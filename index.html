@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>AirDraw Pro - Ultra Smooth</title>
+  <title>AirDraw Pro - Fixed Mirroring</title>
 
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
@@ -13,8 +13,8 @@
 
   <style>
     body { margin:0; background:#000; overflow:hidden; touch-action:none; }
-    #video { width:100vw; height:100vh; object-fit:cover; transform:scaleX(-1); }
-    #canvas { position:fixed; top:0; left:0; width:100%; height:100%; transform:scaleX(-1); pointer-events:none; }
+    #video { width:100vw; height:100vh; object-fit:cover; } /* No mirror on video */
+    #canvas { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; } /* No mirror on canvas */
     button { width:70px; height:70px; border-radius:50%; border:none; box-shadow:0 4px 20px rgba(0,0,0,0.6); font-weight:bold; color:white; }
     #controls { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); display:flex; gap:18px; z-index:10; }
     #clear { background:#333; width:120px; border-radius:40px; }
@@ -24,7 +24,7 @@
 <body>
 <video id="video" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
-<div id="status">Loading ultra-smooth AirDraw...</div>
+<div id="status">Loading ultra-smooth AirDraw (fixed mirroring)...</div>
 <div id="controls">
   <button style="background:#fff;color:#000">White</button>
   <button style="background:#ffff00;color:#000">Yellow</button>
@@ -65,20 +65,24 @@
     video.srcObject = stream;
     video.onloadedmetadata = () => {
       video.play();
-      status.textContent = "✨ Ultra-smooth drawing ready! Use index finger";
+      status.textContent = "✨ Ultra-smooth drawing ready! Use index finger (mirroring fixed)";
       requestAnimationFrame(loop);
     };
   }
 
   async function loop() {
-    const hands = await detector.estimateHands(video, {flipHorizontal: true});
+    const hands = await detector.estimateHands(video, {flipHorizontal: false}); // No flip - matches natural video
     
     if (hands.length > 0) {
       const tip = hands[0].keypoints[TIP];
       
+      // FIXED: Flip the x-coordinate to match natural movement (left-right correct)
+      const flippedX = canvas.width - tip.x;
+      const y = tip.y;
+
       // 1. Exponential smoothing (magic!)
-      smoothX = smoothX * SMOOTHING + tip.x * (1 - SMOOTHING);
-      smoothY = smoothY * SMOOTHING + tip.y * (1 - SMOOTHING);
+      smoothX = smoothX * SMOOTHING + flippedX * (1 - SMOOTHING);
+      smoothY = smoothY * SMOOTHING + y * (1 - SMOOTHING);
 
       // 2. Draw glowing cursor
       ctx.fillStyle = currentColor;
